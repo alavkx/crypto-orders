@@ -1,4 +1,9 @@
-import type { MetaFunction } from "@remix-run/node";
+import {
+  json,
+  type ActionFunctionArgs,
+  type LoaderFunctionArgs,
+  type MetaFunction,
+} from "@remix-run/node";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
@@ -22,24 +27,134 @@ import {
   SearchIcon,
   MoreHorizontalIcon,
 } from "~/components/icons";
+import { Progress } from "~/components/ui/progress";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
+import { Label } from "~/components/ui/label";
+import { getSession } from "~/sessions";
+import { z } from "zod";
+import { Form, useActionData, useLoaderData } from "@remix-run/react";
 
 export const meta: MetaFunction = () => {
   return [
-    { title: "Parallax" },
+    { title: "Orders | Parallax" },
     { name: "description", content: "Welcome to Parallax!" },
   ];
 };
-
+export async function loader({ request }: LoaderFunctionArgs) {
+  const session = await getSession(request.headers.get("Cookie"));
+  const userId = session.get("userId") as string;
+  if (!userId || !process.env.PARALLAX_API_KEY)
+    throw new Error(/* I'm being lazy */);
+  const ordersRes = await fetch(
+    `https://plx-hiring-api.fly.dev/api/users/${userId}/orders`,
+    {
+      headers: { "X-Api-Key": process.env.PARALLAX_API_KEY },
+    }
+  ).then((res) => res.json());
+  return json({
+    orders: z
+      .object({
+        data: z.object({
+          id: z.string(),
+          status: z.union([z.literal("completed"), z.literal("failed")]),
+          quote_id: z.string(),
+          user_id: z.string(),
+          from_amount: z.string(),
+        }),
+      })
+      .parse(ordersRes).data,
+  });
+}
+export async function action({ request }: ActionFunctionArgs) {
+  const session = await getSession(request.headers.get("Cookie"));
+  const userId = session.get("userId");
+  if (!userId || !process.env.PARALLAX_API_KEY)
+    throw new Error(/* I'm being lazy */);
+  const body = await request.formData();
+  switch (body.get("action")) {
+    case "request a quote":
+      const quoteRes = await fetch(
+        "https://plx-hiring-api.fly.dev/api/quotes",
+        {
+          headers: {
+            "X-Api-Key": process.env.PARALLAX_API_KEY,
+          },
+        }
+      );
+      return json({
+        quote: z
+          .object({
+            data: z.object({
+              id: z.string(),
+              created_at: z.date(),
+              rate: z.string(),
+              /* Assuming literal for brevity */
+              from_currency: z.literal("usd"),
+              to_currency: z.literal("php"),
+            }),
+          })
+          .parse(quoteRes).data,
+      });
+    case "exchange":
+      const orderRes = await fetch(
+        "https://plx-hiring-api.fly.dev/api/orders",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Api-Key": process.env.PARALLAX_API_KEY,
+          },
+          body: JSON.stringify(
+            z
+              .object({
+                quote_id: z.string(),
+                user_id: z.string(),
+                from_amount: z.string(),
+              })
+              .parse({
+                quote_id: body.get("quoteId"),
+                user_id: userId,
+                from_amount: body.get("fromAmount"),
+              })
+          ),
+        }
+      );
+      return json({
+        order: z
+          .object({
+            data: z.object({
+              id: z.string(),
+              status: z.string(),
+              quote_id: z.string(),
+              user_id: z.string(),
+              from_amount: z.string(),
+            }),
+          })
+          .parse(orderRes).data,
+      });
+    default:
+      throw new Error(/* I'm being lazy */);
+  }
+}
 export default function Index() {
+  const { orders } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   return (
     <>
       <header className="flex h-14 lg:h-[60px] items-center gap-4 border-b bg-gray-100/40 px-6 dark:bg-gray-800/40">
-        <a className="lg:hidden" href="#">
+        <a className="lg:hidden" href="/">
           <Package2Icon className="h-6 w-6" />
           <span className="sr-only">Home</span>
         </a>
         <div className="flex-1">
-          <h1 className="font-semibold text-lg">Recent Orders</h1>
+          <h1 className="font-semibold text-lg">Orders</h1>
         </div>
         <div className="flex flex-1 items-center gap-4 md:ml-auto md:gap-2 lg:gap-4">
           <form className="ml-auto flex-1 sm:flex-initial">
@@ -81,6 +196,70 @@ export default function Index() {
         </div>
       </header>
       <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-6">
+        <section className="inline-flex gap-4 items-center">
+          <Card className="w-[350px]">
+            <CardHeader>
+              <CardTitle>Request a quote</CardTitle>
+              <CardDescription>
+                Get our up-to-date currency conversion rates
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="">
+                <div className="inline-flex items-baseline">
+                  <span className="text-xs">PHP</span>
+                  <span className="ml-1 font-mono text-lg">₱54.42</span>
+                </div>
+                <div className="text-sm">↑</div>
+                <div className="inline-flex items-baseline">
+                  <span className="text-xs">USD</span>
+                  <span className="ml-1 font-mono text-lg">$01.00</span>
+                </div>
+                <div className="mt-4">
+                  <Progress value={60} about="something" />
+                </div>
+              </div>
+            </CardContent>
+            <CardFooter className="flex justify-end">
+              <Form method="post">
+                <Button>Request quote</Button>
+                <input type="hidden" name="action" value="request a quote" />
+              </Form>
+            </CardFooter>
+          </Card>
+          <div>→</div>
+          <Card className="w-[350px]">
+            <CardHeader>
+              <CardTitle>Create order</CardTitle>
+              <CardDescription>
+                Convert your currency in one click
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form>
+                <div className="grid w-full items-center gap-4">
+                  <div className="flex flex-col space-y-1.5">
+                    <Label htmlFor="name">You will pay</Label>
+                    <Input id="name" placeholder="Amount USD ($) to convert" />
+                  </div>
+                  <div className="flex flex-col space-y-1.5">
+                    <div className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                      You will receive
+                    </div>
+                    <div className="inline-flex items-baseline">
+                      <span className="text-xs">PHP</span>
+                      <span className="ml-1 font-mono text-lg">₱54.42</span>
+                    </div>
+                  </div>
+                </div>
+              </form>
+            </CardContent>
+            <CardFooter className="flex justify-end">
+              <Button>Exchange</Button>
+            </CardFooter>
+          </Card>
+        </section>
+
         <div className="border shadow-sm rounded-lg p-2">
           <Table>
             <TableHeader>

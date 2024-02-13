@@ -1,4 +1,4 @@
-import { LinksFunction } from "@remix-run/node";
+import { LinksFunction, LoaderFunctionArgs, json } from "@remix-run/node";
 import {
   Links,
   Meta,
@@ -6,10 +6,11 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLoaderData,
 } from "@remix-run/react";
 import stylesheet from "~/tailwind.css";
 import { Button } from "./components/ui/button";
-import { BellIcon, HomeIcon } from "@radix-ui/react-icons";
+import { ExclamationTriangleIcon, HomeIcon } from "@radix-ui/react-icons";
 import {
   Package2Icon,
   ShoppingCartIcon,
@@ -18,11 +19,48 @@ import {
   LineChartIcon,
 } from "./components/icons";
 import { cn } from "./lib/utils";
+import { z } from "zod";
+import { commitSession, getSession } from "./sessions";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: stylesheet },
 ];
+export async function loader({ request }: LoaderFunctionArgs) {
+  const session = await getSession(request.headers.get("Cookie"));
+  if (!process.env.PARALLAX_API_KEY)
+    throw Error("Missing PARALLAX_API_KEY in .env file");
+  if (!session.has("userId")) {
+    /* Usually in a /login form; omitting login for brevity 
+
+    https://remix.run/docs/en/main/utils/sessions
+    */
+    const usersRes = await fetch(`https://plx-hiring-api.fly.dev/api/users`, {
+      headers: { "X-Api-Key": process.env.PARALLAX_API_KEY },
+    }).then((res) => res.json());
+    const ApiUsers = z.object({
+      data: z
+        .array(
+          z.object({ id: z.string(), name: z.string(), email: z.string() })
+        )
+        .min(1),
+    });
+    const users = ApiUsers.safeParse(usersRes);
+    if (users.success) session.set("userId", users.data.data[0].id);
+    else session.flash("error", "Failed to fetch users, check your .env 👹");
+  }
+
+  return json(
+    { error: session.get("error") },
+    {
+      headers: {
+        "Set-Cookie": await commitSession(session),
+      },
+    }
+  );
+}
 export default function App() {
+  const data = useLoaderData<typeof loader>();
   return (
     <html lang="en">
       <head>
@@ -43,14 +81,6 @@ export default function App() {
                   <Package2Icon className="h-6 w-6" />
                   <span className="">Parallax</span>
                 </NavLink>
-                <Button
-                  className="ml-auto h-8 w-8"
-                  size="icon"
-                  variant="outline"
-                >
-                  <BellIcon className="h-4 w-4" />
-                  <span className="sr-only">Toggle notifications</span>
-                </Button>
               </div>
               <div className="flex-1 overflow-auto py-2">
                 <nav className="grid items-start px-4 text-sm font-medium">
@@ -120,6 +150,13 @@ export default function App() {
           </div>
           <div className="flex flex-col">
             <Outlet />
+            {data.error ? (
+              <Alert className="m-4 w-auto" variant="destructive">
+                <ExclamationTriangleIcon className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{data.error}</AlertDescription>
+              </Alert>
+            ) : null}
           </div>
         </div>
         <ScrollRestoration />
