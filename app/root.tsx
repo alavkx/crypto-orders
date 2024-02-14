@@ -38,13 +38,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const usersRes = await fetch(`https://plx-hiring-api.fly.dev/api/users`, {
       headers: { "X-Api-Key": process.env.PARALLAX_API_KEY },
     }).then((res) => res.json());
-    const ApiUsers = z.object({
-      data: z
-        .array(
-          z.object({ id: z.string(), name: z.string(), email: z.string() })
-        )
-        .min(1),
-    });
     const users = ApiUsers.safeParse(usersRes);
     if (users.success) session.set("userId", users.data.data[0].id);
     else session.flash("error", "Failed to fetch users, check your .env 👹");

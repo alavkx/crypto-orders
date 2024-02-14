@@ -3,6 +3,7 @@ import {
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
   type MetaFunction,
+  redirect,
 } from "@remix-run/node";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -40,6 +41,7 @@ import { Label } from "~/components/ui/label";
 import { getSession } from "~/sessions";
 import { z } from "zod";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
+import { Plx } from "~/lib/parallax-api";
 
 export const meta: MetaFunction = () => {
   return [
@@ -50,97 +52,42 @@ export const meta: MetaFunction = () => {
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await getSession(request.headers.get("Cookie"));
   const userId = session.get("userId") as string;
-  if (!userId || !process.env.PARALLAX_API_KEY)
-    throw new Error(/* I'm being lazy */);
-  const ordersRes = await fetch(
-    `https://plx-hiring-api.fly.dev/api/users/${userId}/orders`,
-    {
-      headers: { "X-Api-Key": process.env.PARALLAX_API_KEY },
-    }
-  ).then((res) => res.json());
+  if (!userId) return redirect("/login");
   return json({
-    orders: z
-      .object({
-        data: z.object({
-          id: z.string(),
-          status: z.union([z.literal("completed"), z.literal("failed")]),
-          quote_id: z.string(),
-          user_id: z.string(),
-          from_amount: z.string(),
-        }),
-      })
-      .parse(ordersRes).data,
+    orders: Plx.endpoints["get :userId/orders"].Response.parse(
+      await Plx.api(`${userId}/orders`)
+    ).data,
   });
 }
 export async function action({ request }: ActionFunctionArgs) {
   const session = await getSession(request.headers.get("Cookie"));
   const userId = session.get("userId");
-  if (!userId || !process.env.PARALLAX_API_KEY)
-    throw new Error(/* I'm being lazy */);
+  if (!userId) return redirect("/login");
   const body = await request.formData();
   switch (body.get("action")) {
     case "request a quote":
-      const quoteRes = await fetch(
-        "https://plx-hiring-api.fly.dev/api/quotes",
-        {
-          headers: {
-            "X-Api-Key": process.env.PARALLAX_API_KEY,
-          },
-        }
-      );
       return json({
-        quote: z
-          .object({
-            data: z.object({
-              id: z.string(),
-              created_at: z.date(),
-              rate: z.string(),
-              /* Assuming literal for brevity */
-              from_currency: z.literal("usd"),
-              to_currency: z.literal("php"),
-            }),
-          })
-          .parse(quoteRes).data,
+        quote: Plx.endpoints["post /quotes"].response.parse(
+          await Plx.api("/quotes", { method: "POST" })
+        ).data,
       });
     case "exchange":
-      const orderRes = await fetch(
-        "https://plx-hiring-api.fly.dev/api/orders",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Api-Key": process.env.PARALLAX_API_KEY,
-          },
-          body: JSON.stringify(
-            z
-              .object({
-                quote_id: z.string(),
-                user_id: z.string(),
-                from_amount: z.string(),
-              })
-              .parse({
+      return json({
+        order: Plx.endpoints["post /orders"].response.parse(
+          await Plx.api("/orders", {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(
+              Plx.endpoints["post /orders"].request.parse({
                 quote_id: body.get("quoteId"),
                 user_id: userId,
                 from_amount: body.get("fromAmount"),
               })
-          ),
-        }
-      );
-      return json({
-        order: z
-          .object({
-            data: z.object({
-              id: z.string(),
-              status: z.string(),
-              quote_id: z.string(),
-              user_id: z.string(),
-              from_amount: z.string(),
-            }),
+            ),
           })
-          .parse(orderRes).data,
+        ).data,
       });
     default:
-      throw new Error(/* I'm being lazy */);
+      throw new Error(`Matched unimplemented action: ${body.get("action")}`);
   }
 }
 export default function Index() {
