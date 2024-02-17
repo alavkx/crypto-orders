@@ -29,6 +29,7 @@ export const plx = new Zodios(
           z.object({
             id: z.string(),
             status: z.union([
+              z.literal("pending"),
               z.literal("completed"),
               z.literal("failed"),
             ]),
@@ -47,19 +48,8 @@ export const plx = new Zodios(
           id: z.string(),
           created_at: z
             .string()
-            /* datetime doesn't support omission of "Z"
-             * https://github.com/colinhacks/zod/issues/2385
-             */
-            .refine(
-              (value) =>
-                /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(
-                  value
-                ),
-              {
-                message:
-                  "timestamp must be of the unqualified form yyyy-mm-ddThh:mm[:ss[.mmm]]",
-              }
-            ),
+            /* API omits Z */
+            .transform((s) => s + "Z"),
           rate: z.string(),
           /* Assuming literal for brevity */
           from_currency: z.literal("usd"),
@@ -91,6 +81,17 @@ export const plx = new Zodios(
           }),
         },
       ],
+      errors: [
+        {
+          status: 422,
+          description: "Incorrectly shaped request body",
+          schema: z.object({
+            data: z.object({
+              errors: z.unknown(),
+            }),
+          }),
+        },
+      ],
     },
   ],
   {
@@ -106,6 +107,6 @@ plx.axios.interceptors.request.use((request) => {
   return request;
 });
 plx.axios.interceptors.response.use((response) => {
-  console.log(JSON.stringify(response.data, null, 2));
+  console.log(response.data);
   return response;
 });
